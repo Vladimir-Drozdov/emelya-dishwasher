@@ -1,35 +1,32 @@
 import { LitElement, html, css } from "https://unpkg.com/lit@2.8.0/index.js?module";
-
 import {
   handleAction,
   hasAction
 } from "https://unpkg.com/custom-card-helpers@2.0.0/dist/index.m.js?module";
 
-class EmelyaBreezerCard extends LitElement {
-
+class EmelyaCoffeeCard extends LitElement {
   static properties = {
     hass: {},
     config: {},
+    selectedCoffee: { state: true },
     power: { type: Boolean },
-    selectedMode: { state: true },
-    modes: { state: true }
-  };
-
-  DEFAULT_BREEZER_CARD_MOD = {
+    coffeeTypes: { state: true }
+  }; 
+  DEFAULT_COFFEE_CARD_MOD = {
     ".": `
-      ha-card {
-        font-size: 16px !important;
-        border-radius: 24px !important;
-      }
-      
       :host {
         border-radius: 24px !important;
-        border-color: transparent !important;
-        --ha-card-border-color: transparent !important;
-        --divider-color: transparent !important;
       }
       
-      ha-card ha-select {
+      ha-card {
+        font-size: 16px !important;
+        overflow: visible !important;
+      } 
+      
+      ha-card ha-select { 
+        --mdc-select-fill-color: rgba(255, 255, 255, 0.10);
+        --mdc-theme-surface: #1C1B1F;
+        background-color: rgba(255, 255, 255, 0.10) !important;
         border-radius: 16px !important;
         --restore-card-border-radius: 16px !important;
         --ha-card-border-radius: 16px !important;
@@ -48,7 +45,7 @@ class EmelyaBreezerCard extends LitElement {
         .mdc-select {
           border-radius: 16px !important;
           background-color: transparent !important;
-        }  
+        }
 
         .mdc-select__anchor {
           border-radius: 16px !important;
@@ -100,88 +97,86 @@ class EmelyaBreezerCard extends LitElement {
     }
   };
 
-  constructor(){
+  constructor() {
     super();
     this.power = false;
-    this.selectedMode = "";
-    this.modes = [];
+    this.selectedCoffee = "";
+    this.coffeeTypes = [];
     this._expectedPower = null;
-    this._expectedMode = null;
+    this._expectedCoffee = null;
     this._holdTimer = null;
     this._lastTap = 0;
     this._bgPreloaded = false;
   }
 
-  set hass(hass){
+  set hass(hass) {
     this._hass = hass;
 
     const entity = this.config?.entity;
-    const stateObj = hass.states?.[entity];
+    const stateObj = hass?.states?.[entity];
 
-    if (!stateObj) return;
+    if (stateObj) {
+      // Для climate-чайников "on" — это любое состояние кроме "off"/"unavailable"/"unknown"
+      const offStates = ["off", "unavailable", "unknown"];
+      const newPower = !offStates.includes(stateObj.state);
 
-    // POWER
-    const powerEntity = this.config?.power_entity || entity;
-    const powerStateObj = hass.states?.[powerEntity] || stateObj;
-    const offStates = ["off", "unavailable", "unknown"];
-    const newPower = !offStates.includes(powerStateObj.state);
-
-    if (this._expectedPower !== null) {
-      if (newPower === this._expectedPower) {
-        this._expectedPower = null;
-        this.power = newPower;
-      }
-    } else {
-      this.power = newPower;
-    }
-
-    // MODE — определяем источник режимов
-    const modeEntity = this.config?.mode_entity;
-    const isSingleEntity = !modeEntity || modeEntity === entity;
-    const modeStateObj = isSingleEntity
-      ? stateObj
-      : (hass.states?.[modeEntity] ?? null);
-
-    if (modeStateObj) {
-      // fan хранит режимы в preset_modes, select/input_select — в options
-      this.modes = modeStateObj.attributes?.preset_modes
-        || modeStateObj.attributes?.options
-        || [];
-      // fan хранит текущий режим в preset_mode, select — в state
-      const rawMode = modeStateObj.attributes?.preset_mode ?? "";
-      // берём state только для select/input_select (не для fan в off)
-      const currentMode = (rawMode && this.modes.includes(rawMode))
-        ? rawMode
-        : (!isSingleEntity && this.modes.includes(modeStateObj.state)
-            ? modeStateObj.state
-            : "");
-
-      if (this._expectedMode !== null) {
-        if (currentMode === this._expectedMode) {
-          this._expectedMode = null;
-          this.selectedMode = currentMode;
+      if (this._expectedPower !== null) {
+        if (newPower === this._expectedPower) {
+          this._expectedPower = null;
+          this.power = newPower;
         }
       } else {
-        // currentMode || сохранённый || первый из списка — никогда не пустой
-        this.selectedMode = currentMode || this.selectedMode || (this.modes[0] ?? "");
+        this.power = newPower;
+      }
+    }
+
+    const coffeeEntity = this.config?.coffee_entity;
+    const isSingleEntity = !coffeeEntity || coffeeEntity === entity;
+    const modeStateObj = isSingleEntity
+      ? stateObj
+      : (hass?.states?.[coffeeEntity] ?? null);
+
+    if (modeStateObj) {
+      this.coffeeTypes = modeStateObj.attributes?.preset_modes
+        || modeStateObj.attributes?.options
+        || [];
+
+      // fan/climate хранят режим в preset_mode, select — в state
+      const rawMode = modeStateObj.attributes?.preset_mode ?? "";
+      const currentCoffee = (rawMode && this.coffeeTypes.includes(rawMode))
+        ? rawMode
+        : (this.coffeeTypes.includes(modeStateObj.state) ? modeStateObj.state : "");
+
+      if (this._expectedCoffee !== null) {
+        if (currentCoffee === this._expectedCoffee) {
+          this._expectedCoffee = null;
+          this.selectedCoffee = currentCoffee;
+        }
+      } else {
+        this.selectedCoffee = currentCoffee || this.selectedCoffee || (this.coffeeTypes[0] ?? "");
       }
     }
   }
 
-  get hass(){
+  get hass() {
     return this._hass;
   }
 
-  setConfig(config){
+  setConfig(config) {
     this.config = {
       tap_action: { action: "more-info" },
       hold_action: { action: "none" },
       double_tap_action: { action: "none" },
-      title: "Бризер",
-      label_on: "Включено",
+      title: "Кофеварка",
+      // ИЗМЕНЕНИЕ: label_on по умолчанию пустой — тогда трюк показывает текущий режим.
+      // Если задать явно ("Включено") — перекрывает режим, как в оригинале.
+      label_on: "",
       label_off: "Выключено",
+      entity: "",
+      coffee_entity: "",
+      base_path: "/local",
       card_mod: {
-        style: structuredClone(this.DEFAULT_BREEZER_CARD_MOD)
+        style: structuredClone(this.DEFAULT_COFFEE_CARD_MOD)
       },
       ...config,
     };
@@ -193,7 +188,7 @@ class EmelyaBreezerCard extends LitElement {
   _preloadBackground() {
     const bg = this.config?.background_image
       ? this.config.background_image
-      : `${this.base}/images/container-images/breezer.png`;
+      : `${this.base}/images/container-images/coffee_machine.png`;
 
     if (bg && bg !== this._preloadedBg) {
       this._preloadedBg = bg;
@@ -222,35 +217,42 @@ class EmelyaBreezerCard extends LitElement {
   }
 
   static styles = css`
-    :host { 
-      display: block; 
-      max-width:450px; 
-      min-width:320px; 
-      width: 100%; 
-      font-family: Roboto; 
-      color: white; 
-      border-radius: 24px !important;
-      border: none !important;
-    }
-    ha-card{
+    :host {
+      display: block;
+      max-width: 450px;
+      min-width: 320px;
+      width: 100%;
+      font-family: Roboto, sans-serif;
+      color: white;
       border-radius: 24px !important;
       border: none !important;
     }
 
+    ha-card {
+      border-radius: 24px !important;
+      border: none !important;
+      overflow: visible !important;
+    }
+
     .card {
-      width:100%;
-      box-sizing:border-box;
-      display:flex;
-      flex-direction:column;
-      justify-content:space-between;
-      padding:16px;
-      height:320px;
-      border-radius:24px;
-      color:white;
+      width: 100%;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 16px;
+      height: 320px;
+      border-radius: 24px;
+      color: white;
       cursor: pointer;
       user-select: none;
       position: relative;
+      overflow: visible !important;
       background: #1C1B1F;
+    }
+    :host(:has([aria-expanded="true"])) ha-card {
+      z-index: 10 !important;
+      position: relative !important;
     }
 
     .card::before {
@@ -259,11 +261,11 @@ class EmelyaBreezerCard extends LitElement {
       inset: 0;
       border-radius: 24px;
       background-image:
-        linear-gradient(180deg, rgba(28, 27, 31, 0.00) 74.79%, #1C1B1F 100%),
-        var(--breezer-bg, none),
+        linear-gradient(180deg, rgba(28, 27, 31, 0.00) 70%, #1C1B1F 100%),
+        var(--coffee-bg, none),
         linear-gradient(0deg, #1C1B1F, #1C1B1F);
-      background-size: auto, 70.472% 98.523%, auto;
-      background-position: center, 105.316px 49.164px, center;
+      background-size: auto, 74.782% 76.117%, auto;
+      background-position: center, 88px 53.12px, center;
       background-repeat: no-repeat, no-repeat, no-repeat;
       background-blend-mode: normal, luminosity, normal;
       opacity: 0;
@@ -291,29 +293,32 @@ class EmelyaBreezerCard extends LitElement {
       pointer-events: none;
     }
 
-    .header{ 
-      display:flex; 
-      justify-content:space-between; 
-      align-items:center;
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       position: relative;
     }
-    .title{ 
-      font-size:16px; 
-      font-weight:600; 
+
+    .title {
+      font-size: 16px;
+      font-weight: 600;
     }
-    .state{ 
-      font-size:15px; 
-      opacity:0.6; 
+
+    .state {
+      font-size: 15px;
+      opacity: 0.6;
     }
-    .controls{ 
-      display:flex; 
-      gap:8px; 
-      align-items:center;
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
       position: relative;
       z-index: 2 !important;
     }
 
-    .power{
+    .power {
       display: flex;
       width: 56px;
       height: 56px;
@@ -321,20 +326,27 @@ class EmelyaBreezerCard extends LitElement {
       justify-content: center;
       align-items: center;
       gap: 8px;
-      aspect-ratio: 1/1;
+      aspect-ratio: 1 / 1;
       border-radius: 50%;
       background: rgba(255, 255, 255, 0.10);
       box-sizing: border-box;
       position: relative;
+      flex-shrink: 0;
+      cursor: pointer;
     }
-      
+
     .power::before {
       content: "" !important;
       position: absolute !important;
       inset: 0 !important;
       padding: 1px !important;
       border-radius: inherit !important;
-      background: linear-gradient(135deg, rgba(101, 101, 101, 0) 0%, #656565 50%, rgba(101, 101, 101, 0) 100%) !important;
+      background: linear-gradient(
+        135deg,
+        rgba(101, 101, 101, 0) 0%,
+        #656565 50%,
+        rgba(101, 101, 101, 0) 100%
+      ) !important;
       pointer-events: none !important;
       -webkit-mask:
         linear-gradient(#fff 0 0) content-box,
@@ -343,14 +355,21 @@ class EmelyaBreezerCard extends LitElement {
       mask-composite: exclude !important;
     }
 
-    .power.active{ 
+    .power.active {
       background: #4D4A54;
     }
 
-    ha-select{
-      width:100%;
+    .power img {
+      width: 24px;
+      height: 24px;
+      object-fit: contain;
+    }
+
+    ha-select {
+      width: 100%;
       position: relative !important;
       background: rgba(255, 255, 255, 0.10) !important;
+      border-radius: 16px;
     }
 
     ha-select::before {
@@ -359,7 +378,12 @@ class EmelyaBreezerCard extends LitElement {
       inset: 0 !important;
       padding: 1px !important;
       border-radius: inherit !important;
-      background: linear-gradient(165deg, rgba(101, 101, 101, 0) 0%, #656565 50%, rgba(101, 101, 101, 0) 100%) !important;
+      background: linear-gradient(
+        165deg,
+        rgba(101, 101, 101, 0) 0%,
+        #656565 50%,
+        rgba(101, 101, 101, 0) 100%
+      ) !important;
       pointer-events: none !important;
       -webkit-mask:
         linear-gradient(#fff 0 0) content-box,
@@ -369,7 +393,7 @@ class EmelyaBreezerCard extends LitElement {
     }
   `;
 
-  _stopPropagation(e){
+  _stopPropagation(e) {
     e.stopPropagation();
   }
 
@@ -393,16 +417,16 @@ class EmelyaBreezerCard extends LitElement {
   }
 
   _onPointerDown(e) {
-    if (e.target.closest('ha-select') || e.target.closest('.power')) return;
+    if (e.target.closest("ha-select") || e.target.closest(".power")) return;
 
-    if (hasAction(this.config, 'hold_action')) {
+    if (hasAction(this.config, "hold_action")) {
       this._holdTimer = setTimeout(() => {
-        this._performAction('hold');
+        this._performAction("hold");
       }, 500);
     }
   }
 
-  _onPointerUp(e) {
+  _onPointerUp() {
     if (this._holdTimer) {
       clearTimeout(this._holdTimer);
       this._holdTimer = null;
@@ -410,24 +434,23 @@ class EmelyaBreezerCard extends LitElement {
   }
 
   _onClick(e) {
-    if (e.target.closest('ha-select') || e.target.closest('.power')) return;
+    if (e.target.closest("ha-select") || e.target.closest(".power")) return;
 
     const now = Date.now();
 
     if (this._lastTap && now - this._lastTap < 300) {
-      if (hasAction(this.config, 'double_tap_action')) {
+      if (hasAction(this.config, "double_tap_action")) {
         e.stopImmediatePropagation();
-        this._performAction('double_tap');
+        this._performAction("double_tap");
         this._lastTap = 0;
         return;
       }
     }
 
     this._lastTap = now;
-
     setTimeout(() => {
       if (this._lastTap === now) {
-        this._performAction('tap');
+        this._performAction("tap");
       }
     }, 320);
   }
@@ -437,51 +460,52 @@ class EmelyaBreezerCard extends LitElement {
     handleAction(this, this.hass, this.config, actionType);
   }
 
-  _togglePower(e){
+  _togglePower(e) {
     e.stopPropagation();
+
     const entity = this.config?.entity;
-    const powerEntity = this.config?.power_entity || entity;
-    if (!powerEntity || !this.hass) return;
+    if (!entity || !this.hass) return;
 
     const newPower = !this.power;
     this.power = newPower;
     this._expectedPower = newPower;
 
-    const powerDomain = powerEntity.split(".")[0];
-    const readOnlyDomains = ["sensor", "binary_sensor"];
-    if (readOnlyDomains.includes(powerDomain)) {
-      console.warn("emelya-breezer: power entity is read-only:", powerEntity);
-      return;
-    }
+    const domain = entity.split(".")[0];
 
-    const service = newPower ? "turn_on" : "turn_off";
-    this.hass.callService(powerDomain, service, { entity_id: powerEntity });
+    // switch — прямой toggle; climate/fan — turn_on/turn_off; остальные — homeassistant
+    if (domain === "switch") {
+      this.hass.callService("switch", "toggle", { entity_id: entity });
+    } else {
+      this.hass.callService("homeassistant", newPower ? "turn_on" : "turn_off", {
+        entity_id: entity
+      });
+    }
   }
 
-  _handleSelectChange(e){
+  _handleSelectChange(e) {
     e.stopPropagation();
+
     const value = e.target.value;
     if (!value) return;
 
-    this.selectedMode = value;
-    this._expectedMode = value;
+    this.selectedCoffee = value;
+    this._expectedCoffee = value;
 
-    const entity = this.config?.entity;
-    const modeEntity = this.config?.mode_entity;
-    const stateObj = this.hass?.states?.[entity];
+    const coffeeEntity = this.config?.coffee_entity;
+    const isSingleEntity = !coffeeEntity || coffeeEntity === entity;
+    const targetEntity = isSingleEntity ? entity : coffeeEntity;
 
-    if (!stateObj) return;
+    if (!this.hass?.states?.[targetEntity]) return;
 
-    const isSingleEntity = !modeEntity || modeEntity === entity;
-    const targetEntity = isSingleEntity ? entity : modeEntity;
+    const domain = targetEntity.split(".")[0];
 
-    if (isSingleEntity && stateObj.attributes?.preset_modes) {
+    if (domain === "fan") {
       this.hass.callService("fan", "set_preset_mode", {
         entity_id: targetEntity,
         preset_mode: value
       });
     } else {
-      const domain = targetEntity.split(".")[0];
+      // select, input_select — одинаковый сервис через домен
       this.hass.callService(domain, "select_option", {
         entity_id: targetEntity,
         option: value
@@ -489,88 +513,100 @@ class EmelyaBreezerCard extends LitElement {
     }
   }
 
-  _handleSelectDblClick(e){
+  _handleSelectDblClick(e) {
     e.stopPropagation();
-    const entityForInfo = this.config?.mode_entity || this.config?.entity;
-    if (entityForInfo) {
+
+    if (this.config.coffee_entity) {
       this.dispatchEvent(new CustomEvent("hass-more-info", {
-        detail: { entityId: entityForInfo },
+        detail: { entityId: this.config.coffee_entity },
         bubbles: true,
         composed: true
       }));
     }
   }
 
-  render(){
+  render() {
     const entity = this.config?.entity;
-    const modeEntity = this.config?.mode_entity;
-    const stateObj = this.hass?.states?.[entity];
-
-    // Определяем источник режимов — та же логика что и в set hass
-    const isSingleEntity = !modeEntity || modeEntity === entity;
+    const coffeeEntity = this.config?.coffee_entity;
+    const isSingleEntity = !coffeeEntity || coffeeEntity === entity;
     const modeStateObj = isSingleEntity
-      ? stateObj
-      : (this.hass?.states?.[modeEntity] ?? null);
-
-    // Режимы: fan → preset_modes, select → options
+      ? this.hass?.states?.[entity]
+      : (this.hass?.states?.[coffeeEntity] ?? null);
     const modeOptions = modeStateObj?.attributes?.preset_modes
       || modeStateObj?.attributes?.options
       || [];
 
     const bg = this.config.background_image
       ? this.config.background_image
-      : `${this.base}/images/container-images/breezer.png`;
+      : `${this.base}/images/container-images/coffee_machine.png`;
 
-    // Статус в шапке: если выкл — label_off; если вкл и label_on, то label_on; если вкл и без label_on и есть режим — показываем режим
+    // ИЗМЕНЕНИЕ: тот же трюк что в dishwasher-карточке.
+    // Приоритет: label_on (статичный) → mode_labels[режим] (переименованный) → сырой режим → "Включено"
+    // Если label_on пустой (дефолт) — в правом углу виден текущий режим.
     const stateLabel = this.power
-      ? (this.config?.label_on || this.config?.mode_labels?.[this.selectedMode] || this.selectedMode || "Включено")
+      ? (this.config?.label_on || this.config?.mode_labels?.[this.selectedCoffee] || this.selectedCoffee || "Включено")
       : (this.config?.label_off || "Выключено");
 
     return html`
-    <ha-card>
-      <div
-        class="card"
-        style="--breezer-bg: url('${bg}'); border: none; border-radius: 24px !important;"
-      >
-
-        <div class="header">
-          <div class="title">${this.config?.title || "Бризер"}</div>
-          <div class="state">${stateLabel}</div>
-        </div>
-
-        <div class="controls">
-          <div 
-            class="power ${this.power ? "active" : ""}"
-            @pointerdown=${this._stopPropagation}
-            @click=${this._togglePower}
-          >
-            <img src="${this.base}/images/container-images/power_button.png">
+      <ha-card>
+        <div
+          class="card"
+          style="--coffee-bg: url('${bg}'); border: none; border-radius: 24px !important;"
+        >
+          <div class="header">
+            <div class="title">${this.config?.title || ""}</div>
+            <div class="state">${stateLabel}</div>
           </div>
 
-          ${modeOptions.length ? html`
-            <ha-select
-              .label=${"Режим"}
-              .value=${this.selectedMode}
+          <div class="controls">
+            <div
+              class="power ${this.power ? "active" : ""}"
               @pointerdown=${this._stopPropagation}
-              @change=${this._handleSelectChange}
-              @dblclick=${this._handleSelectDblClick}
+              @click=${this._togglePower}
             >
-              ${modeOptions.map(opt => html`
-                <mwc-list-item .value=${opt}>${this.config?.mode_labels?.[opt] || opt}</mwc-list-item>
-              `)}
-            </ha-select>
-          ` : ""}
-        </div>
+              <img src="${this.base}/images/container-images/power_button.png" alt="power">
+            </div>
 
-      </div>
-    </ha-card>
+            ${modeOptions.length ? html`
+              <ha-select
+                .label=${coffeeState?.attributes?.friendly_name || ""}
+                .value=${this.selectedCoffee}
+                @pointerdown=${this._stopPropagation}
+                @change=${this._handleSelectChange}
+                @dblclick=${this._handleSelectDblClick}
+              >
+                ${modeOptions.map(opt => html`
+                  <mwc-list-item .value=${opt}>${this.config?.mode_labels?.[opt] || opt}</mwc-list-item>
+                `)}
+              </ha-select>
+            ` : ""}
+          </div>
+        </div>
+      </ha-card>
     `;
+  }
+
+  static getConfigElement() {
+    return document.createElement("emelya-coffee-card-editor");
+  }
+
+  static getStubConfig() {
+    return {
+      title: "Кофеварка",
+      label_on: "",
+      label_off: "Выключено",
+      entity: "",
+      coffee_entity: "",
+      base_path: "/local",
+      tap_action: { action: "more-info" },
+      hold_action: { action: "none" },
+      double_tap_action: { action: "none" }
+    };
   }
 }
 
 /* EDITOR */
-
-class EmelyaBreezerCardEditor extends LitElement {
+class EmelyaCoffeeCardEditor extends LitElement {
   static properties = {
     hass: {},
     _config: { state: true },
@@ -581,7 +617,10 @@ class EmelyaBreezerCardEditor extends LitElement {
   };
 
   static styles = css`
-    :host { display: block; box-sizing: border-box; }
+    :host {
+      display: block;
+      box-sizing: border-box;
+    }
 
     .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .tab {
@@ -681,16 +720,23 @@ class EmelyaBreezerCardEditor extends LitElement {
     this._dragOver = false;
   }
 
-  setConfig(config) { this._config = { ...config }; }
+  setConfig(config) {
+    this._config = {
+      base_path: "/local",
+      ...config
+    };
+  }
 
   render() {
     if (!this._config) return html``;
+
     return html`
       <div class="tabs">
         ${["Объект", "Внешний вид", "Взаимодействия"].map((t, i) => html`
           <div class="tab ${this._tab === i ? "active" : ""}" @click=${() => this._tab = i}>${t}</div>
         `)}
       </div>
+
       ${this._tab === 0 ? this._objectTab() : ""}
       ${this._tab === 1 ? this._appearanceTab() : ""}
       ${this._tab === 2 ? this._actionsTab() : ""}
@@ -698,57 +744,35 @@ class EmelyaBreezerCardEditor extends LitElement {
   }
 
   _objectTab() {
-    const entity = this._config?.entity;
-    const modeEntity = this._config?.mode_entity;
-
-    // Собираем режимы из обеих сущностей — что найдём, то и показываем
-    const modeState = this.hass?.states?.[modeEntity];
-    const fanState  = this.hass?.states?.[entity];
-
-    const options = modeState?.attributes?.options
-      || fanState?.attributes?.preset_modes
-      || fanState?.attributes?.options
-      || [];
-
-    const labels = this._config?.mode_labels || {};
+    const coffeeEntity = this._config?.coffee_entity;
+    const coffeeState  = this.hass?.states?.[coffeeEntity];
+    const options      = coffeeState?.attributes?.options || [];
+    const labels       = this._config?.mode_labels || {};
 
     return html`
       ${this._form([
-        { name: "title",       label: "Название",     selector: { text: {} } },
-        { name: "label_on",    label: "Статус: вкл",  selector: { text: {} } },
-        { name: "label_off",   label: "Статус: выкл", selector: { text: {} } },
-        { 
-          name: "entity",      
-          required: true, 
-          selector: { entity: { domain: ["fan", "switch"] } } 
-        },
-        { 
-          name: "mode_entity", 
-          required: false, 
-          selector: { 
-            entity: { 
-              domain: ["fan", "switch", "select", "input_select"]
-            } 
-          }
+        { name: "title",         label: "Название",      selector: { text: {} } },
+        { name: "label_on",      label: "Статус: вкл (пусто — показывает режим)",   selector: { text: {} } },
+        { name: "label_off",     label: "Статус: выкл",  selector: { text: {} } },
+        {
+          name: "entity",
+          required: true,
+          selector: { entity: { domain: ["switch", "input_boolean", "select", "input_select", "fan"] } }
         },
         {
-          name: "power_entity",
+          name: "coffee_entity",
+          // ИЗМЕНЕНИЕ: необязательный — у некоторых кофеварок нет режимов
           required: false,
-          selector: {
-            entity: {
-              domain: ["switch", "input_boolean", "binary_sensor"]
-            }
-          }
+          selector: { entity: { domain: ["input_select", "select"] } }
         },
-        { 
-          name: "base_path",
-          selector: { text: {} } 
-        }
+        { name: "base_path",     selector: { text: {} } }
       ])}
 
       ${options.length ? html`
-        <div class="mode-labels" style="margin-top: 20px;">
-          <div class="img-label">Названия режимов</div>
+        <div class="mode-labels">
+          <div class="img-label" style="margin-top:16px;margin-bottom:8px;">
+            Названия режимов
+          </div>
           ${options.map(opt => html`
             <div class="mode-label-row">
               <span class="mode-key">${opt}</span>
@@ -842,8 +866,6 @@ class EmelyaBreezerCardEditor extends LitElement {
       </div>
     `;
   }
-
-  /* ── Drag & Drop ── */
 
   _onDragOver(e) { e.preventDefault(); this._dragOver = true; }
   _onDragLeave()  { this._dragOver = false; }
@@ -965,29 +987,14 @@ class EmelyaBreezerCardEditor extends LitElement {
   }
 }
 
-/* Регистрация */
-EmelyaBreezerCard.getConfigElement = function () {
-  return document.createElement("emelya-breezer-card-editor");
-};
-
-EmelyaBreezerCard.getStubConfig = function () {
-  return {
-    title: "Бризер",
-    label_on: "",
-    label_off: "Выключено",
-    entity: "",
-    mode_entity: "",
-    base_path: "/local",
-  };
-};
-
-customElements.define("emelya-breezer-card-editor", EmelyaBreezerCardEditor);
-customElements.define("emelya-breezer-card", EmelyaBreezerCard);
+/* REGISTRATION */
+customElements.define("emelya-coffee-card-editor", EmelyaCoffeeCardEditor);
+customElements.define("emelya-coffee-card", EmelyaCoffeeCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: "custom:emelya-breezer-card",
-  name: "Emelya Breezer Card",
-  description: "Управление бризером",
+  type: "custom:emelya-coffee-card",
+  name: "Emelya Coffee Card",
+  description: "Управление кофеваркой",
   preview: true
 });
