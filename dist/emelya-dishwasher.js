@@ -1,18 +1,21 @@
 import { LitElement, html, css } from "https://unpkg.com/lit@2.8.0/index.js?module";
+
 import {
   handleAction,
   hasAction
 } from "https://unpkg.com/custom-card-helpers@2.0.0/dist/index.m.js?module";
 
-class EmelyaCoffeeCard extends LitElement {
+class EmelyaDishwasherCard extends LitElement {
+
   static properties = {
     hass: {},
     config: {},
-    selectedCoffee: { state: true },
+    selectedMode: { state: true },
     power: { type: Boolean },
-    coffeeTypes: { state: true }
-  }; 
-  DEFAULT_COFFEE_CARD_MOD = {
+    modes: { state: true }
+  };
+
+  DEFAULT_DISHWASHER_CARD_MOD = {
     ".": `
       :host {
         border-radius: 24px !important;
@@ -20,7 +23,6 @@ class EmelyaCoffeeCard extends LitElement {
       
       ha-card {
         font-size: 16px !important;
-        overflow: visible !important;
       } 
       
       ha-card ha-select { 
@@ -45,7 +47,7 @@ class EmelyaCoffeeCard extends LitElement {
         .mdc-select {
           border-radius: 16px !important;
           background-color: transparent !important;
-        }
+        }  
 
         .mdc-select__anchor {
           border-radius: 16px !important;
@@ -97,175 +99,160 @@ class EmelyaCoffeeCard extends LitElement {
     }
   };
 
-  constructor() {
+  constructor(){
     super();
     this.power = false;
-    this.selectedCoffee = "";
-    this.coffeeTypes = [];
+    this.selectedMode = "";
+    this.modes = [];
     this._expectedPower = null;
-    this._expectedCoffee = null;
+    this._expectedMode = null;
     this._holdTimer = null;
     this._lastTap = 0;
-    this._bgPreloaded = false;
+    this._preloadedBg = null;
   }
 
-  set hass(hass) {
+  set hass(hass){
     this._hass = hass;
 
     const entity = this.config?.entity;
-    const stateObj = hass?.states?.[entity];
+    const stateObj = hass.states?.[entity];
 
-    if (stateObj) {
-      // Для climate-чайников "on" — это любое состояние кроме "off"/"unavailable"/"unknown"
-      const offStates = ["off", "unavailable", "unknown"];
-      const newPower = !offStates.includes(stateObj.state);
+    if (!stateObj) return;
 
-      if (this._expectedPower !== null) {
-        if (newPower === this._expectedPower) {
-          this._expectedPower = null;
-          this.power = newPower;
-        }
-      } else {
+    // POWER
+    const powerEntity = this.config?.power_entity || entity;
+    const powerStateObj = hass.states?.[powerEntity] || stateObj;
+    const offStates = ["off", "unavailable", "unknown"];
+    const newPower = !offStates.includes(powerStateObj.state);
+
+    if (this._expectedPower !== null) {
+      if (newPower === this._expectedPower) {
+        this._expectedPower = null;
         this.power = newPower;
       }
+    } else {
+      this.power = newPower;
     }
 
-    const coffeeEntity = this.config?.coffee_entity;
-    const isSingleEntity = !coffeeEntity || coffeeEntity === entity;
+    // MODE — FIX 3: определяем источник режимов как в бризере
+    const modeEntity = this.config?.mode_entity;
+    const isSingleEntity = !modeEntity || modeEntity === entity;
     const modeStateObj = isSingleEntity
       ? stateObj
-      : (hass?.states?.[coffeeEntity] ?? null);
+      : (hass.states?.[modeEntity] ?? null);
 
     if (modeStateObj) {
-      this.coffeeTypes = modeStateObj.attributes?.preset_modes
+      // FIX 2: фолбек на preset_modes (для fan) помимо options
+      this.modes = modeStateObj.attributes?.preset_modes
         || modeStateObj.attributes?.options
         || [];
 
-      // fan/climate хранят режим в preset_mode, select — в state
+      // fan хранит текущий режим в preset_mode, select — в state
       const rawMode = modeStateObj.attributes?.preset_mode ?? "";
-      const currentCoffee = (rawMode && this.coffeeTypes.includes(rawMode))
+      const currentMode = (rawMode && this.modes.includes(rawMode))
         ? rawMode
-        : (this.coffeeTypes.includes(modeStateObj.state) ? modeStateObj.state : "");
+        : (!isSingleEntity && this.modes.includes(modeStateObj.state)
+            ? modeStateObj.state
+            : "");
 
-      if (this._expectedCoffee !== null) {
-        if (currentCoffee === this._expectedCoffee) {
-          this._expectedCoffee = null;
-          this.selectedCoffee = currentCoffee;
+      if (this._expectedMode !== null) {
+        if (currentMode === this._expectedMode) {
+          this._expectedMode = null;
+          this.selectedMode = currentMode;
         }
       } else {
-        this.selectedCoffee = currentCoffee || this.selectedCoffee || (this.coffeeTypes[0] ?? "");
+        // FIX 4: никогда не оставляем селект пустым — подставляем первый режим
+        this.selectedMode = currentMode || this.selectedMode || (this.modes[0] ?? "");
       }
     }
   }
 
-  get hass() {
+  get hass(){
     return this._hass;
   }
 
-  setConfig(config) {
+  setConfig(config){
     this.config = {
       tap_action: { action: "more-info" },
       hold_action: { action: "none" },
       double_tap_action: { action: "none" },
-      title: "Кофеварка",
-      // ИЗМЕНЕНИЕ: label_on по умолчанию пустой — тогда трюк показывает текущий режим.
-      // Если задать явно ("Включено") — перекрывает режим, как в оригинале.
+      title: "Посудомойка",
       label_on: "",
       label_off: "Выключено",
-      entity: "",
-      coffee_entity: "",
-      base_path: "/local",
       card_mod: {
-        style: structuredClone(this.DEFAULT_COFFEE_CARD_MOD)
+        style: structuredClone(this.DEFAULT_DISHWASHER_CARD_MOD)
       },
       ...config,
     };
-
     this.base = this.config.base_path || "/local";
     this._preloadBackground();
   }
 
-  _preloadBackground() {
-    const bg = this.config?.background_image
-      ? this.config.background_image
-      : `${this.base}/images/container-images/coffee_machine.png`;
+  updated() {
+    const card = this.renderRoot?.querySelector(".card[data-bg]");
+    if (!card) return;
+    const bgUrl = card.dataset.bg;
+    if (!bgUrl || card._bgInitialized === bgUrl) return;
+    card._bgInitialized = bgUrl;
+    card.style.setProperty("--card-bg", `url("${bgUrl}")`);
+    const img = new Image();
+    img.onload = () => card.classList.add("bg-loaded");
+    img.src = bgUrl;
+  }
 
-    if (bg && bg !== this._preloadedBg) {
+  _preloadBackground() {
+    const bg = this.config.background_image
+      ? this.config.background_image
+      : `${this.base}/images/container-images/dishwasher.png`;
+
+    if (bg && this._preloadedBg !== bg) {
       this._preloadedBg = bg;
-      this._bgPreloaded = false;
       const img = new Image();
-      img.onload = () => {
-        this._bgPreloaded = true;
-        const card = this.renderRoot?.querySelector(".card");
-        if (card) card.classList.add("bg-loaded");
-      };
       img.src = bg;
     }
   }
 
-  updated(changedProps) {
-    if (changedProps.has("config")) {
-      this._preloadBackground();
-    }
-
-    const card = this.renderRoot?.querySelector(".card");
-    if (!card) return;
-
-    if (this._bgPreloaded) {
-      card.classList.add("bg-loaded");
-    }
-  }
-
   static styles = css`
-    :host {
-      display: block;
-      max-width: 450px;
-      min-width: 320px;
-      width: 100%;
-      font-family: Roboto, sans-serif;
-      color: white;
+    :host { 
+      display: block; 
+      max-width:450px; min-width:320px; 
+      width: 100%; 
+      font-family: Roboto; 
+      color: white; 
       border-radius: 24px !important;
       border: none !important;
     }
-
-    ha-card {
+    ha-card{
       border-radius: 24px !important;
       border: none !important;
-      overflow: visible !important;
     }
 
     .card {
-      width: 100%;
-      box-sizing: border-box;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      padding: 16px;
-      height: 320px;
-      border-radius: 24px;
-      color: white;
+      width:100%;
+      box-sizing:border-box;
+      display:flex;
+      flex-direction:column;
+      justify-content:space-between;
+      padding:16px;
+      height:320px;
+      border-radius:24px;
+      color:white;
       cursor: pointer;
       user-select: none;
       position: relative;
-      overflow: visible !important;
       background: #1C1B1F;
     }
-    :host(:has([aria-expanded="true"])) ha-card {
-      z-index: 10 !important;
-      position: relative !important;
-    }
-
-    .card::before {
+    .card-bg {
       content: "";
       position: absolute;
       inset: 0;
       border-radius: 24px;
       background-image:
-        linear-gradient(180deg, rgba(28, 27, 31, 0.00) 70%, #1C1B1F 100%),
-        var(--coffee-bg, none),
+        linear-gradient(180deg, rgba(28, 27, 31, 0.00) 75%, #1C1B1F 100%),
+        var(--card-bg, none),
         linear-gradient(0deg, #1C1B1F, #1C1B1F);
-      background-size: auto, 74.782% 76.117%, auto;
-      background-position: center, 88px 53.12px, center;
+      background-size: auto, 100.889% 102.166%, auto;
+      background-position: center, 41.817px 1.357px, center;
       background-repeat: no-repeat, no-repeat, no-repeat;
       background-blend-mode: normal, luminosity, normal;
       opacity: 0;
@@ -273,12 +260,10 @@ class EmelyaCoffeeCard extends LitElement {
       pointer-events: none;
       z-index: 0;
     }
-
-    .card.bg-loaded::before {
+    .card.bg-loaded .card-bg {
       opacity: 1;
     }
-
-    .card::after {
+    .card::before {
       content: "";
       position: absolute;
       inset: 0;
@@ -291,34 +276,31 @@ class EmelyaCoffeeCard extends LitElement {
       -webkit-mask-composite: xor !important;
       mask-composite: exclude !important;
       pointer-events: none;
+      z-index: 1;
     }
 
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .header{ 
+      display:flex; 
+      justify-content:space-between; 
+      align-items:center;
       position: relative;
     }
-
-    .title {
-      font-size: 16px;
-      font-weight: 600;
+    .title{ 
+      font-size:16px; 
+      font-weight:600; 
     }
-
-    .state {
-      font-size: 15px;
-      opacity: 0.6;
+    .state{ 
+      font-size:15px; 
+      opacity:0.6; 
     }
-
-    .controls {
-      display: flex;
-      gap: 8px;
-      align-items: center;
+    .controls{ 
+      display:flex; 
+      gap:8px; 
+      align-items:center;
       position: relative;
       z-index: 2 !important;
     }
-
-    .power {
+    .power{
       display: flex;
       width: 56px;
       height: 56px;
@@ -326,27 +308,20 @@ class EmelyaCoffeeCard extends LitElement {
       justify-content: center;
       align-items: center;
       gap: 8px;
-      aspect-ratio: 1 / 1;
+      aspect-ratio: 1/1;
       border-radius: 50%;
       background: rgba(255, 255, 255, 0.10);
       box-sizing: border-box;
       position: relative;
-      flex-shrink: 0;
-      cursor: pointer;
     }
-
+      
     .power::before {
       content: "" !important;
       position: absolute !important;
       inset: 0 !important;
       padding: 1px !important;
       border-radius: inherit !important;
-      background: linear-gradient(
-        135deg,
-        rgba(101, 101, 101, 0) 0%,
-        #656565 50%,
-        rgba(101, 101, 101, 0) 100%
-      ) !important;
+      background: linear-gradient(135deg, rgba(101, 101, 101, 0) 0%, #656565 50%, rgba(101, 101, 101, 0) 100%) !important;
       pointer-events: none !important;
       -webkit-mask:
         linear-gradient(#fff 0 0) content-box,
@@ -354,36 +329,21 @@ class EmelyaCoffeeCard extends LitElement {
       -webkit-mask-composite: xor !important;
       mask-composite: exclude !important;
     }
-
-    .power.active {
+    .power.active{ 
       background: #4D4A54;
     }
-
-    .power img {
-      width: 24px;
-      height: 24px;
-      object-fit: contain;
-    }
-
-    ha-select {
-      width: 100%;
+    ha-select{
+      width:100%;
       position: relative !important;
       background: rgba(255, 255, 255, 0.10) !important;
-      border-radius: 16px;
     }
-
     ha-select::before {
       content: "" !important;
       position: absolute !important;
       inset: 0 !important;
       padding: 1px !important;
       border-radius: inherit !important;
-      background: linear-gradient(
-        165deg,
-        rgba(101, 101, 101, 0) 0%,
-        #656565 50%,
-        rgba(101, 101, 101, 0) 100%
-      ) !important;
+      background: linear-gradient(165deg, rgba(101, 101, 101, 0) 0%, #656565 50%, rgba(101, 101, 101, 0) 100%) !important;
       pointer-events: none !important;
       -webkit-mask:
         linear-gradient(#fff 0 0) content-box,
@@ -393,7 +353,7 @@ class EmelyaCoffeeCard extends LitElement {
     }
   `;
 
-  _stopPropagation(e) {
+  _stopPropagation(e){
     e.stopPropagation();
   }
 
@@ -404,8 +364,6 @@ class EmelyaCoffeeCard extends LitElement {
     card.addEventListener("pointerdown", this._onPointerDown.bind(this));
     card.addEventListener("pointerup", this._onPointerUp.bind(this));
     card.addEventListener("click", this._onClick.bind(this));
-
-    if (this._bgPreloaded) card.classList.add("bg-loaded");
   }
 
   disconnectedCallback() {
@@ -417,16 +375,16 @@ class EmelyaCoffeeCard extends LitElement {
   }
 
   _onPointerDown(e) {
-    if (e.target.closest("ha-select") || e.target.closest(".power")) return;
+    if (e.target.closest('ha-select') || e.target.closest('.power')) return;
 
-    if (hasAction(this.config, "hold_action")) {
+    if (hasAction(this.config, 'hold_action')) {
       this._holdTimer = setTimeout(() => {
-        this._performAction("hold");
+        this._performAction('hold');
       }, 500);
     }
   }
 
-  _onPointerUp() {
+  _onPointerUp(e) {
     if (this._holdTimer) {
       clearTimeout(this._holdTimer);
       this._holdTimer = null;
@@ -434,23 +392,24 @@ class EmelyaCoffeeCard extends LitElement {
   }
 
   _onClick(e) {
-    if (e.target.closest("ha-select") || e.target.closest(".power")) return;
+    if (e.target.closest('ha-select') || e.target.closest('.power')) return;
 
     const now = Date.now();
 
     if (this._lastTap && now - this._lastTap < 300) {
-      if (hasAction(this.config, "double_tap_action")) {
+      if (hasAction(this.config, 'double_tap_action')) {
         e.stopImmediatePropagation();
-        this._performAction("double_tap");
+        this._performAction('double_tap');
         this._lastTap = 0;
         return;
       }
     }
 
     this._lastTap = now;
+
     setTimeout(() => {
       if (this._lastTap === now) {
-        this._performAction("tap");
+        this._performAction('tap');
       }
     }, 320);
   }
@@ -460,153 +419,143 @@ class EmelyaCoffeeCard extends LitElement {
     handleAction(this, this.hass, this.config, actionType);
   }
 
-  _togglePower(e) {
+  _togglePower(e){
     e.stopPropagation();
-
     const entity = this.config?.entity;
-    if (!entity || !this.hass) return;
+    const powerEntity = this.config?.power_entity || entity;
+    if (!powerEntity || !this.hass) return;
 
     const newPower = !this.power;
     this.power = newPower;
     this._expectedPower = newPower;
 
-    const domain = entity.split(".")[0];
+    const powerDomain = powerEntity.split(".")[0];
 
-    // switch — прямой toggle; climate/fan — turn_on/turn_off; остальные — homeassistant
-    if (domain === "switch") {
-      this.hass.callService("switch", "toggle", { entity_id: entity });
-    } else {
-      this.hass.callService("homeassistant", newPower ? "turn_on" : "turn_off", {
-        entity_id: entity
-      });
+    const readOnlyDomains = ["sensor", "binary_sensor"];
+    if (readOnlyDomains.includes(powerDomain)) {
+      console.warn("emelya-dishwasher: power entity is read-only:", powerEntity);
+      return;
     }
+
+    const service = newPower ? "turn_on" : "turn_off";
+    this.hass.callService(powerDomain, service, { entity_id: powerEntity });
   }
 
-  _handleSelectChange(e) {
+  _handleSelectChange(e){
     e.stopPropagation();
-
     const value = e.target.value;
     if (!value) return;
 
-    this.selectedCoffee = value;
-    this._expectedCoffee = value;
+    this.selectedMode = value;
+    this._expectedMode = value;
 
-    const coffeeEntity = this.config?.coffee_entity;
-    const isSingleEntity = !coffeeEntity || coffeeEntity === entity;
-    const targetEntity = isSingleEntity ? entity : coffeeEntity;
+    const entity = this.config?.entity;
+    const modeEntity = this.config?.mode_entity;
+    const stateObj = this.hass?.states?.[entity];
 
-    if (!this.hass?.states?.[targetEntity]) return;
+    if (!stateObj) return;
 
-    const domain = targetEntity.split(".")[0];
+    // FIX 3: та же логика isSingleEntity что в set hass
+    const isSingleEntity = !modeEntity || modeEntity === entity;
+    const targetEntity = isSingleEntity ? entity : modeEntity;
 
-    if (domain === "fan") {
+    if (isSingleEntity && stateObj.attributes?.preset_modes) {
+      // fan с preset_modes — одна сущность
       this.hass.callService("fan", "set_preset_mode", {
         entity_id: targetEntity,
         preset_mode: value
       });
     } else {
-      // select, input_select — одинаковый сервис через домен
-      this.hass.callService(domain, "select_option", {
-        entity_id: targetEntity,
-        option: value
-      });
+      // FIX 2: отдельная mode_entity — select или fan
+      const domain = targetEntity.split(".")[0];
+      if (domain === "fan") {
+        this.hass.callService("fan", "set_preset_mode", {
+          entity_id: targetEntity,
+          preset_mode: value
+        });
+      } else {
+        this.hass.callService(domain, "select_option", {
+          entity_id: targetEntity,
+          option: value
+        });
+      }
     }
   }
 
-  _handleSelectDblClick(e) {
+  _handleSelectDblClick(e){
     e.stopPropagation();
-
-    if (this.config.coffee_entity) {
+    const entityForInfo = this.config?.mode_entity || this.config?.entity;
+    if (entityForInfo) {
       this.dispatchEvent(new CustomEvent("hass-more-info", {
-        detail: { entityId: this.config.coffee_entity },
+        detail: { entityId: entityForInfo },
         bubbles: true,
         composed: true
       }));
     }
   }
 
-  render() {
+  render(){
     const entity = this.config?.entity;
-    const coffeeEntity = this.config?.coffee_entity;
-    const isSingleEntity = !coffeeEntity || coffeeEntity === entity;
+    const modeEntity = this.config?.mode_entity;
+
+    // FIX 3: та же логика isSingleEntity для render
+    const isSingleEntity = !modeEntity || modeEntity === entity;
     const modeStateObj = isSingleEntity
       ? this.hass?.states?.[entity]
-      : (this.hass?.states?.[coffeeEntity] ?? null);
+      : (this.hass?.states?.[modeEntity] ?? null);
+
+    // FIX 2: preset_modes или options
     const modeOptions = modeStateObj?.attributes?.preset_modes
       || modeStateObj?.attributes?.options
       || [];
 
     const bg = this.config.background_image
       ? this.config.background_image
-      : `${this.base}/images/container-images/coffee_machine.png`;
-
-    // ИЗМЕНЕНИЕ: тот же трюк что в dishwasher-карточке.
-    // Приоритет: label_on (статичный) → mode_labels[режим] (переименованный) → сырой режим → "Включено"
-    // Если label_on пустой (дефолт) — в правом углу виден текущий режим.
-    const stateLabel = this.power
-      ? (this.config?.label_on || this.config?.mode_labels?.[this.selectedCoffee] || this.selectedCoffee || "Включено")
-      : (this.config?.label_off || "Выключено");
+      : `${this.base}/images/container-images/dishwasher.png`;
 
     return html`
-      <ha-card>
-        <div
-          class="card"
-          style="--coffee-bg: url('${bg}'); border: none; border-radius: 24px !important;"
-        >
-          <div class="header">
-            <div class="title">${this.config?.title || ""}</div>
-            <div class="state">${stateLabel}</div>
-          </div>
+    <ha-card>
+      <div class="card" data-bg="${bg}">
+        <div class="card-bg"></div>
 
-          <div class="controls">
-            <div
-              class="power ${this.power ? "active" : ""}"
-              @pointerdown=${this._stopPropagation}
-              @click=${this._togglePower}
-            >
-              <img src="${this.base}/images/container-images/power_button.png" alt="power">
-            </div>
-
-            ${modeOptions.length ? html`
-              <ha-select
-                .label=${coffeeState?.attributes?.friendly_name || ""}
-                .value=${this.selectedCoffee}
-                @pointerdown=${this._stopPropagation}
-                @change=${this._handleSelectChange}
-                @dblclick=${this._handleSelectDblClick}
-              >
-                ${modeOptions.map(opt => html`
-                  <mwc-list-item .value=${opt}>${this.config?.mode_labels?.[opt] || opt}</mwc-list-item>
-                `)}
-              </ha-select>
-            ` : ""}
-          </div>
+        <div class="header">
+          <div class="title">${this.config?.title || ""}</div>
+          <div class="state">${this.power ? (this.config?.label_on || this.config?.mode_labels?.[this.selectedMode] || this.selectedMode || "Включено") : (this.config?.label_off || "Выключено")}</div>
         </div>
-      </ha-card>
+
+        <div class="controls">
+          <div 
+            class="power ${this.power ? "active" : ""}"
+            @pointerdown=${this._stopPropagation}
+            @click=${this._togglePower}
+          >
+            <img src="${this.base}/images/container-images/power_button.png">
+          </div>
+
+          ${modeOptions.length ? html`
+            <ha-select
+              .label=${"Режим"}
+              .value=${this.selectedMode}
+              @pointerdown=${this._stopPropagation}
+              @change=${this._handleSelectChange}
+              @dblclick=${this._handleSelectDblClick}
+            >
+              ${modeOptions.map(opt => html`
+                <mwc-list-item .value=${opt}>${this.config?.mode_labels?.[opt] || opt}</mwc-list-item>
+              `)}
+            </ha-select>
+          ` : ""}
+        </div>
+
+      </div>
+    </ha-card>
     `;
-  }
-
-  static getConfigElement() {
-    return document.createElement("emelya-coffee-card-editor");
-  }
-
-  static getStubConfig() {
-    return {
-      title: "Кофеварка",
-      label_on: "",
-      label_off: "Выключено",
-      entity: "",
-      coffee_entity: "",
-      base_path: "/local",
-      tap_action: { action: "more-info" },
-      hold_action: { action: "none" },
-      double_tap_action: { action: "none" }
-    };
   }
 }
 
 /* EDITOR */
-class EmelyaCoffeeCardEditor extends LitElement {
+
+class EmelyaDishwasherCardEditor extends LitElement {
   static properties = {
     hass: {},
     _config: { state: true },
@@ -617,10 +566,7 @@ class EmelyaCoffeeCardEditor extends LitElement {
   };
 
   static styles = css`
-    :host {
-      display: block;
-      box-sizing: border-box;
-    }
+    :host { display: block; box-sizing: border-box; }
 
     .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .tab {
@@ -720,23 +666,16 @@ class EmelyaCoffeeCardEditor extends LitElement {
     this._dragOver = false;
   }
 
-  setConfig(config) {
-    this._config = {
-      base_path: "/local",
-      ...config
-    };
-  }
+  setConfig(config) { this._config = { ...config }; }
 
   render() {
     if (!this._config) return html``;
-
     return html`
       <div class="tabs">
         ${["Объект", "Внешний вид", "Взаимодействия"].map((t, i) => html`
           <div class="tab ${this._tab === i ? "active" : ""}" @click=${() => this._tab = i}>${t}</div>
         `)}
       </div>
-
       ${this._tab === 0 ? this._objectTab() : ""}
       ${this._tab === 1 ? this._appearanceTab() : ""}
       ${this._tab === 2 ? this._actionsTab() : ""}
@@ -744,35 +683,57 @@ class EmelyaCoffeeCardEditor extends LitElement {
   }
 
   _objectTab() {
-    const coffeeEntity = this._config?.coffee_entity;
-    const coffeeState  = this.hass?.states?.[coffeeEntity];
-    const options      = coffeeState?.attributes?.options || [];
-    const labels       = this._config?.mode_labels || {};
+    const entity     = this._config?.entity;
+    const modeEntity = this._config?.mode_entity;
+
+    // FIX 3: собираем режимы с учётом isSingleEntity
+    const isSingleEntity = !modeEntity || modeEntity === entity;
+    const modeStateObj = isSingleEntity
+      ? this.hass?.states?.[entity]
+      : (this.hass?.states?.[modeEntity] ?? null);
+
+    // FIX 2: preset_modes или options
+    const options = modeStateObj?.attributes?.preset_modes
+      || modeStateObj?.attributes?.options
+      || [];
+
+    const labels = this._config?.mode_labels || {};
 
     return html`
       ${this._form([
-        { name: "title",         label: "Название",      selector: { text: {} } },
-        { name: "label_on",      label: "Статус: вкл (пусто — показывает режим)",   selector: { text: {} } },
-        { name: "label_off",     label: "Статус: выкл",  selector: { text: {} } },
+        { name: "title",       label: "Название",     selector: { text: {} } },
+        { name: "label_on",    label: "Статус: вкл",  selector: { text: {} } },
+        { name: "label_off",   label: "Статус: выкл", selector: { text: {} } },
         {
           name: "entity",
           required: true,
-          selector: { entity: { domain: ["switch", "input_boolean", "select", "input_select", "fan"] } }
+          selector: { entity: { domain: ["switch", "fan", "sensor", "binary_sensor", "input_boolean"] } }
         },
         {
-          name: "coffee_entity",
-          // ИЗМЕНЕНИЕ: необязательный — у некоторых кофеварок нет режимов
+          // FIX 1: mode_entity необязателен (убран required: true)
+          name: "mode_entity",
           required: false,
-          selector: { entity: { domain: ["input_select", "select"] } }
+          selector: {
+            entity: {
+              domain: ["fan", "switch", "select", "input_select"]
+            }
+          }
         },
-        { name: "base_path",     selector: { text: {} } }
+        {
+          name: "power_entity",
+          required: false,
+          selector: {
+            entity: {
+              domain: ["switch", "input_boolean", "binary_sensor"]
+            }
+          }
+        },
+        { name: "base_path", selector: { text: {} } }
       ])}
 
       ${options.length ? html`
-        <div class="mode-labels">
-          <div class="img-label" style="margin-top:16px;margin-bottom:8px;">
-            Названия режимов
-          </div>
+        <div class="mode-labels" style="margin-top: 20px;">
+          <div class="img-label">Названия режимов</div>
           ${options.map(opt => html`
             <div class="mode-label-row">
               <span class="mode-key">${opt}</span>
@@ -987,14 +948,29 @@ class EmelyaCoffeeCardEditor extends LitElement {
   }
 }
 
-/* REGISTRATION */
-customElements.define("emelya-coffee-card-editor", EmelyaCoffeeCardEditor);
-customElements.define("emelya-coffee-card", EmelyaCoffeeCard);
+/* Регистрация */
+EmelyaDishwasherCard.getConfigElement = function () {
+  return document.createElement("emelya-dishwasher-card-editor");
+};
+
+EmelyaDishwasherCard.getStubConfig = function () {
+  return {
+    title: "Посудомойка",
+    label_on: "",
+    label_off: "Выключено",
+    entity: "",
+    mode_entity: "",
+    base_path: "/local",
+  };
+};
+
+customElements.define("emelya-dishwasher-card-editor", EmelyaDishwasherCardEditor);
+customElements.define("emelya-dishwasher", EmelyaDishwasherCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type: "custom:emelya-coffee-card",
-  name: "Emelya Coffee Card",
-  description: "Управление кофеваркой",
+  type: "custom:emelya-dishwasher",
+  name: "Emelya Dishwasher Card",
+  description: "Управление посудомоечной машиной",
   preview: true
 });
